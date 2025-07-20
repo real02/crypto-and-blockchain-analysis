@@ -1,0 +1,121 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Crypto Arbitrage Real-Time Dashboard",
+    "tags": ["crypto", "arbitrage", "real-time"],
+    "timezone": "browser",
+    "refresh": "5s",
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "exchanges",
+          "type": "custom",
+          "label": "Exchanges",
+          "multi": true,
+          "includeAll": true,
+          "allValue": "binance,coinbase,kraken,bitstamp,gemini",
+          "options": [
+            { "text": "Binance", "value": "binance", "selected": true },
+            { "text": "Coinbase", "value": "coinbase", "selected": true },
+            { "text": "Kraken", "value": "kraken", "selected": true },
+            { "text": "Bitstamp", "value": "bitstamp", "selected": false },
+            { "text": "Gemini", "value": "gemini", "selected": false }
+          ]
+        },
+        {
+          "name": "symbols",
+          "type": "custom",
+          "label": "Trading Pairs",
+          "multi": true,
+          "includeAll": true,
+          "allValue": "BTC/USD,ETH/USD,SOL/USD,MATIC/USD,ADA/USD",
+          "options": [
+            { "text": "BTC/USD", "value": "BTC/USD", "selected": true },
+            { "text": "ETH/USD", "value": "ETH/USD", "selected": true },
+            { "text": "SOL/USD", "value": "SOL/USD", "selected": true },
+            { "text": "MATIC/USD", "value": "MATIC/USD", "selected": false },
+            { "text": "ADA/USD", "value": "ADA/USD", "selected": false }
+          ]
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Start Real-Time Data Fetching",
+        "type": "text",
+        "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+        "content": "# Control Panel\n\n**Start Data Fetching:** [🚀 Start Real-Time Fetch](http://localhost:8000/start-realtime-fetch?exchanges=${exchanges:csv}&symbols=${symbols:csv}&duration_minutes=60&grafana_base_url=http://localhost:3000&dashboard_uid=crypto-arbitrage)\n\n**Stop Data Fetching:** [🛑 Stop All Fetchers](http://localhost:8000/stop-realtime-fetch)\n\n**Current Selection:** Exchanges: `${exchanges}` | Symbols: `${symbols}`"
+      },
+      {
+        "id": 2,
+        "title": "Active Arbitrage Opportunities",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 3 },
+        "targets": [
+          {
+            "queryType": "",
+            "rawSql": "SELECT \n  detection_timestamp as 'Detection Time',\n  symbol as 'Symbol',\n  buy_exchange as 'Buy Exchange',\n  sell_exchange as 'Sell Exchange',\n  ROUND(buy_price, 4) as 'Buy Price',\n  ROUND(sell_price, 4) as 'Sell Price',\n  ROUND(gross_profit_percentage, 2) as 'Gross Profit %',\n  ROUND(net_profit_percentage, 2) as 'Net Profit %',\n  ROUND(net_profit_usd, 2) as 'Net Profit USD',\n  ROUND(volume_constraint, 2) as 'Max Volume',\n  risk_level as 'Risk'\nFROM arbitrage_opportunities \nWHERE detection_timestamp >= $__timeFrom() \n  AND detection_timestamp <= $__timeTo()\n  AND symbol IN (${symbols:sqlstring})\n  AND (buy_exchange IN (${exchanges:sqlstring}) OR sell_exchange IN (${exchanges:sqlstring}))\n  AND net_profit_percentage > 0.1\nORDER BY detection_timestamp DESC, net_profit_percentage DESC\nLIMIT 50",
+            "format": "table"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Price Spreads by Exchange",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+        "targets": [
+          {
+            "queryType": "",
+            "rawSql": "SELECT \n  timestamp as time,\n  CONCAT(exchange, ' - ', symbol) as metric,\n  spread_percentage as value\nFROM exchange_data \nWHERE timestamp >= $__timeFrom() \n  AND timestamp <= $__timeTo()\n  AND symbol IN (${symbols:sqlstring})\n  AND exchange IN (${exchanges:sqlstring})\n  AND spread_percentage IS NOT NULL\nORDER BY timestamp",
+            "format": "time_series"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Gas Prices (Gwei)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+        "targets": [
+          {
+            "queryType": "",
+            "rawSql": "SELECT \n  timestamp as time,\n  'Safe Gas Price' as metric,\n  safe_gas_price as value\nFROM blockchain_data \nWHERE timestamp >= $__timeFrom() \n  AND timestamp <= $__timeTo()\n  AND data_type = 'gas_prices'\n  AND safe_gas_price IS NOT NULL\n\nUNION ALL\n\nSELECT \n  timestamp as time,\n  'Fast Gas Price' as metric,\n  fast_gas_price as value\nFROM blockchain_data \nWHERE timestamp >= $__timeFrom() \n  AND timestamp <= $__timeTo()\n  AND data_type = 'gas_prices'\n  AND fast_gas_price IS NOT NULL\n\nORDER BY time",
+            "format": "time_series"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Profit Distribution",
+        "type": "histogram",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+        "targets": [
+          {
+            "queryType": "",
+            "rawSql": "SELECT \n  net_profit_percentage as value\nFROM arbitrage_opportunities \nWHERE detection_timestamp >= $__timeFrom() \n  AND detection_timestamp <= $__timeTo()\n  AND symbol IN (${symbols:sqlstring})\n  AND (buy_exchange IN (${exchanges:sqlstring}) OR sell_exchange IN (${exchanges:sqlstring}))\n  AND net_profit_percentage > 0",
+            "format": "table"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Network Status",
+        "type": "stat",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+        "targets": [
+          {
+            "queryType": "",
+            "rawSql": "SELECT \n  'Block Number' as metric,\n  MAX(block_number) as value\nFROM blockchain_data \nWHERE timestamp >= $__timeFrom() \n  AND data_type = 'latest_block'\n\nUNION ALL\n\nSELECT \n  'Gas Usage %' as metric,\n  AVG(gas_usage_percentage) as value\nFROM blockchain_data \nWHERE timestamp >= $__timeFrom() \n  AND data_type = 'network_metrics'\n  AND gas_usage_percentage IS NOT NULL\n\nUNION ALL\n\nSELECT \n  'Avg Gas Price' as metric,\n  AVG(avg_gas_price) as value\nFROM blockchain_data \nWHERE timestamp >= $__timeFrom() \n  AND data_type = 'tx_statistics'\n  AND avg_gas_price IS NOT NULL",
+            "format": "table"
+          }
+        ]
+      }
+    ]
+  }
+}
