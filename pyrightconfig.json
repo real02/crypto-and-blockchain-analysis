@@ -1,0 +1,12 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "executionEnvironments": [
+    {
+      "root": "./",
+      "extraPaths": ["./app"] // <-- so "from utils import ..." resolves if utils is in app/
+    }
+  ],
+  "reportMissingTypeStubs": "none"
+}
