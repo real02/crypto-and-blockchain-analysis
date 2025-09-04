@@ -182,7 +182,7 @@ cython_debug/
 .env.*.local
 
 # Exclude all .pem files
-*.pem
+*.pem*
 *.key
 *.p12
 *.pfx
