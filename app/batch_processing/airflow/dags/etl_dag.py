@@ -101,6 +101,7 @@ def fetch_and_load_usdt_weth(**ctx):
             )
 
         CEX_ADDRESSES = load_cex_addresses_from_csv()
+
         rows = []
 
         for token, addr in [("usdt", USDT_ADDRESS), ("weth", WETH_ADDRESS)]:
@@ -150,35 +151,42 @@ def fetch_and_load_usdt_weth(**ctx):
 
 
 def fetch_and_load_gas_prices(**ctx):
-    async def run()
-    ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
-    if not ETHERSCAN_API_KEY:
-        logger.warning(
-            "No Etherscan API key found. Using API without key may result in rate limiting."
+    async def run():
+        ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
+        if not ETHERSCAN_API_KEY:
+            logger.warning(
+                "No Etherscan API key found. Using API without key may result in rate limiting."
+            )
+
+        url = f"https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey={ETHERSCAN_API_KEY}"
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                r = await response.json()
+
+        result = r.get("result", {})
+
+        stmt = """
+            INSERT INTO gas_prices_raw (safe_gas, propose_gas, fast_gas, timestamp)
+            SELECT %s, %s, %s, current_timestamp()
+        """
+
+        conn = snowflake.connector.connect(**SNOWFLAKE_CONN, schema="RAW")
+        cs = conn.cursor()
+        cs.execute(
+            stmt,
+            (
+                result.get("SafeGasPrice"),
+                result.get("ProposeGasPrice"),
+                result.get("FastGasPrice"),
+            ),
         )
+        cs.close()
+        conn.close()
+        assert "SafeGasPrice" in result
 
-    url = f"https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey={ETHERSCAN_API_KEY}"
-    r = requests.get(url).json()
-    result = r.get("result", {})
+    asyncio.run(run())
 
-    stmt = """
-       INSERT INTO gas_prices_raw (safe_gas, propose_gas, fast_gas, timestamp)
-       SELECT %s, %s, %s, current_timestamp()
-    """
-
-    conn = snowflake.connector.connect(**SNOWFLAKE_CONN, schema="RAW")
-    cs = conn.cursor()
-    cs.execute(
-        stmt,
-        (
-            result.get("SafeGasPrice"),
-            result.get("ProposeGasPrice"),
-            result.get("FastGasPrice"),
-        ),
-    )
-    cs.close()
-    conn.close()
-    assert "SafeGasPrice" in result
 
 
 # TODO do rate limit fetching blockchain data (resuse rate limiting)
