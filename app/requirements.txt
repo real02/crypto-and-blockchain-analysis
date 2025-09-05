@@ -8,3 +8,4 @@ ccxt~=4.4
 aiohttp~=3.11
 kafka-python~=2.0
 pydantic~=2.10
+snowflake-connector-python~=3.16
