@@ -7,27 +7,32 @@ This project implements a real-time crypto arbitrage detection system that monit
 ### Primary Goals
 
 - **Real-time Market Monitoring**: Track cryptocurrency prices across multiple exchanges simultaneously
-- **Blockchain Network Analysis**: Monitor Ethereum gas prices, block fullness, and network congestion  
+- **Blockchain Network Analysis**: Monitor Ethereum gas prices, block fullness, and network congestion
 - **Arbitrage Detection**: Identify profitable trading opportunities with consideration for transaction costs
 - **Decision Support**: Provide traders with actionable insights including risk assessment based on network conditions
 
 ## System Architecture
+
+![Real-Time vs Batch Flowchart](docs/images/real-time-vs-batch-use-case-visualised.png)
 
 The architecture follows a modern event-driven approach with these key components:
 
 ### Components
 
 1. **Data Collection Layer**
+
    - Python-based FastAPI service that collects data from:
      - Multiple cryptocurrency exchanges via CCXT library
      - Ethereum blockchain via Etherscan API
    - Optimized for parallel processing with rate limiting to respect API constraints
 
 2. **Data Stream Processing**
+
    - Confluent Kafka message broker deployed on AWS EC2
    - Separate topics for exchange data and blockchain metrics
 
 3. **Operational Database**
+
    - SingleStore (formerly MemSQL) for high-performance storage and analysis
    - Real-time data ingestion via Kafka pipelines
    - SQL stored procedures for continuous analysis and arbitrage detection
@@ -70,17 +75,20 @@ The architecture follows a modern event-driven approach with these key component
 The system uses a structured data model with these primary entities:
 
 ### Exchange Data
+
 - Pricing information from multiple exchanges
 - Order book depth (top bids/asks)
 - Spread metrics
 
 ### Blockchain Data
+
 - Gas prices (fast, safe, proposed)
 - Block statistics (fullness, transaction count)
 - Recent transaction metrics
 - Network congestion indicators
 
 ### Derived Data
+
 - Arbitrage opportunities
 - Network status summaries
 - Exchange price comparisons
@@ -93,6 +101,7 @@ The system uses a structured data model with these primary entities:
 The system uses a parallel processing approach to efficiently collect data from multiple sources:
 
 1. **Exchange Data Collection**:
+
    - Concurrent requests to different exchanges
    - Sequential processing within each exchange to respect rate limits
    - Collection of both ticker data and order book depth
@@ -105,6 +114,7 @@ The system uses a parallel processing approach to efficiently collect data from 
 ### Processing Pipeline
 
 1. **Data Ingestion**:
+
    - FastAPI endpoints trigger data collection background tasks
    - Configurable continuous collection mode with adaptive interval timing
    - Data sent to Kafka topics with compression for efficiency
@@ -132,6 +142,7 @@ The system uses a parallel processing approach to efficiently collect data from 
 **Challenge**: Cryptocurrency exchanges enforce strict rate limits that vary widely between providers.
 
 **Solution**: Implemented a custom rate limiting system with:
+
 - Per-exchange async rate limiters
 - Parallel processing across exchanges but sequential within each exchange
 - Configurable calls-per-second parameters
@@ -141,6 +152,7 @@ The system uses a parallel processing approach to efficiently collect data from 
 **Challenge**: Ethereum gas prices can fluctuate rapidly, affecting the profitability of arbitrage opportunities.
 
 **Solution**:
+
 - Real-time monitoring of gas prices via Etherscan API
 - Incorporation of gas costs into arbitrage profit calculations
 - Risk categorization based on network congestion
@@ -150,6 +162,7 @@ The system uses a parallel processing approach to efficiently collect data from 
 **Challenge**: Ensuring that exchange data and blockchain metrics are time-synchronized for accurate analysis.
 
 **Solution**:
+
 - Timestamp standardization across all data sources
 - Collection of data in parallel to minimize time differences
 - Time-window based analysis in stored procedures
@@ -168,16 +181,19 @@ The system achieves:
 Several potential improvements could extend the system's capabilities:
 
 1. **Advanced Analytics**:
+
    - Machine learning models to predict profitable arbitrage windows
    - Pattern recognition for recurring market inefficiencies
    - Time-series analysis for understanding market dynamics
 
 2. **Additional Data Sources**:
+
    - Integration with decentralized exchanges (DEXs)
    - Social media sentiment analysis
    - Order book imbalance metrics
 
 3. **Automated Trading**:
+
    - Trading strategy execution through exchange APIs
    - Risk management and position sizing algorithms
    - Performance tracking and strategy backtesting
@@ -201,6 +217,7 @@ Several potential improvements could extend the system's capabilities:
 ### Configuration
 
 1. Create a `.env` file with the following environment variables:
+
    ```
    ETHERSCAN_API_KEY=your_key_here
    CONFLUENT_BOOTSTRAP_SERVERS=your_servers_here
@@ -220,11 +237,13 @@ Several potential improvements could extend the system's capabilities:
 ### Deployment
 
 1. Start the FastAPI service:
+
    ```
    uvicorn fastapi_listener:app --host 0.0.0.0 --port 8000
    ```
 
 2. Set up the cron jobs for database procedures:
+
    ```
    ./setup_crontab.sh
    ```
