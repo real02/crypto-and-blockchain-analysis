@@ -1,0 +1,12 @@
+exchange,address,label,source,is_active,last_updated
+binance,0x28C6c06298d514Db089934071355E5743bf21d60,Binance Hot Wallet,manual,TRUE,2025-07-28
+binance,0x7a8a34db9acd10c3b6277473b192fe47192569ca,Binance: Hot Wallet 14,etherscan,TRUE,2025-07-28
+binance,0xF977814e90dA44bFA03b6295A0616a897441aceC,Binance Hot Wallet 20,manual,TRUE,2025-07-28
+kraken,0x0A869d79a7052C7f1b55a8EbAbbB2fC9fC377d4d,Kraken 4,manual,TRUE,2025-07-28
+kraken,0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0,Kraken 6,etherscan,TRUE,2025-07-28
+bitfinex,0x742d35Cc6634C0532925a3b844Bc454e4438f44e,Bitfinex 1,manual,TRUE,2025-07-28
+bitfinex,0x876eabf441b2ee5b5b0554fd502a8e0600950cfa,Bitfinex 3,manual,TRUE,2025-07-28
+kucoin,0x70a08231eE2A11A341D595D5eC942D8E64c22217,KuCoin 2,manual,TRUE,2025-07-28
+kucoin,0xB8E9325367F4FB1d4C7C8Da80a4E63D68A2Df10D,KuCoin 6,etherscan,TRUE,2025-07-28
+huobijp,0xDc76CD25977E0a5Ae17155770273aD58648900D3,Huobi 2,manual,TRUE,2025-07-28
+huobijp,0x8d12A197cB00D4747a1fe03395095ce2A5CC6819,Huobi 5,etherscan,TRUE,2025-07-28
