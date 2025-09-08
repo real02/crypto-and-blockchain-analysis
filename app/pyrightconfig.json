@@ -8,5 +8,16 @@
       "extraPaths": ["./app"] // <-- so "from utils import ..." resolves if utils is in app/
     }
   ],
-  "reportMissingTypeStubs": "none"
+  "reportMissingTypeStubs": "none",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "diagnosticSeverityOverrides": {
+    "reportUnknownVariableType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownParameterType": "none",
+    "reportUnknownLambdaType": "none",
+    "reportUnusedCallResult": "none"
+  },
+  "exclude": ["venv", ".venv", "**/__pycache__/**"]
 }
