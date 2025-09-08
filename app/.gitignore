@@ -200,3 +200,5 @@ api-key-*
 *private*
 *.crt
 *.csr
+
+*:Zone.Identifier
