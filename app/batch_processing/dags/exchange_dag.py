@@ -7,6 +7,7 @@ from airflow.decorators import dag, task
 from airflow.sdk import Variable
 from datetime import timedelta
 
+from batch_processing.dags.utils.fetch_loop import fetch_loop
 from fastapi_listener import rate_limited_fetch_exchange_data
 
 SYMBOLS = ['BTC/USDT', 'ETH/USDT']
@@ -50,12 +51,12 @@ def load_to_snowflake(records):
 
 
 def run_async_cex_fetch_and_load():
-    async def collect_all():
-        tasks = [rate_limited_fetch_exchange_data(exchange, SYMBOLS) for exchange in EXCHANGES]
-        results = await asyncio.gather(*tasks)
-        return [record for sublist in results for record in sublist]
+    async def run():
+        params = [(exchange, SYMBOLS) for exchange in EXCHANGES]
+        results = await fetch_loop(rate_limited_fetch_exchange_data, params)
+        return results
 
-    records = asyncio.run(collect_all())
+    records = asyncio.run(run())
     load_to_snowflake(records)
 
 
@@ -63,7 +64,7 @@ def run_async_cex_fetch_and_load():
 @dag(
     dag_id='cex_price_fetch_and_load_dag',
     default_args=default_args,
-    schedule='*/30 * * * *',
+    schedule='*/15 * * * *',
     start_date=pendulum.now('UTC').subtract(days=1),
     catchup=False,
     max_active_runs=1,

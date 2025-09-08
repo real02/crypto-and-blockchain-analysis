@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from airflow.decorators import dag, task
+from airflow.sdk import Variable
+from batch_processing.dags.utils.fetch_loop import fetch_loop
 from batch_processing.snowflake.snowflake_utils import SNOWFLAKE_CONN
 from blockchain_collector import etherscan_limiter
 
@@ -92,6 +94,49 @@ def load_cex_addresses_from_csv():
     return df["address"].tolist()
 
 
+def load_usd_weth_data(records):
+    conn = snowflake.connector.connect(**Variable.get("snowflake_conn_json", deserialize_json=True), schema="RAW")
+    cs = conn.cursor()
+    stmt = """
+        INSERT INTO usdt_weth_transfers_raw
+        (token, tx_hash, from_addr, to_addr, value, time_stamp, block_number)
+        SELECT %s, %s, %s, %s, %s, %s, %s
+    """
+
+    for r in records:
+        cs.execute(
+            stmt,
+            (
+                r["token"],
+                r["tx_hash"],
+                r["from_addr"],
+                r["to_addr"],
+                r["value"],
+                int(r["time_stamp"]),
+                int(r["block_number"]),
+            ),
+        )
+    cs.close()
+    conn.close()
+    logging.info(f"Inserted {len(records)} records into Snowflake.")
+
+
+async def fetch_usdt_weth_transfers(contract_address, wallet, start_block, end_block, token):
+    txs = await fetch_all_token_transfers(contract_address, wallet, start_block, end_block)
+    return [
+        {
+            "token": token,
+            "tx_hash": tx["hash"],
+            "from_addr": tx["from"].lower(),
+            "to_addr": tx["to"].lower(),
+            "value": tx["value"],
+            "time_stamp": tx["timeStamp"],
+            "block_number": tx["blockNumber"],
+        }
+        for tx in txs
+    ]
+
+
 def run_async_fetch_and_load_usdt_weth(**ctx):
     async def run():
         start_block = ctx.get("params", {}).get("start_block")
@@ -111,96 +156,67 @@ def run_async_fetch_and_load_usdt_weth(**ctx):
 
         CEX_ADDRESSES = load_cex_addresses_from_csv()
 
-        rows = []
+        params = []
 
         for token, addr in [("usdt", USDT_ADDRESS), ("weth", WETH_ADDRESS)]:
             for wallet in CEX_ADDRESSES:
-                txs = await fetch_all_token_transfers(
-                    addr, wallet, start_block, end_block
-                )
-                for tx in txs:
-                    rows.append(
-                        {
-                            "token": token,
-                            "tx_hash": tx["hash"],
-                            "from_addr": tx["from"].lower(),
-                            "to_addr": tx["to"].lower(),
-                            "value": tx["value"],
-                            "time_stamp": tx["timeStamp"],
-                            "block_number": tx["blockNumber"],
-                        }
-                    )
+                params.append((addr, wallet, start_block, end_block, token))
 
-        conn = snowflake.connector.connect(**SNOWFLAKE_CONN, schema="RAW")
-        cs = conn.cursor()
-        stmt = """
-            INSERT INTO usdt_weth_transfers_raw
-              (token, tx_hash, from_addr, to_addr, value, time_stamp, block_number)
-            SELECT %s, %s, %s, %s, %s, %s, %s
-        """
+        return await fetch_loop(fetch_usdt_weth_transfers, params)
 
-        for row in rows:
-            cs.execute(
-                stmt,
-                (
-                    row["token"],
-                    row["tx_hash"],
-                    row["from_addr"],
-                    row["to_addr"],
-                    row["value"],
-                    int(row["time_stamp"]),
-                    int(row["block_number"]),
-                ),
-            )
-        cs.close()
-        conn.close()
-        assert rows, "No transfer rows fetched"
+    records = asyncio.run(run())
+    load_usd_weth_data(records)
 
-    asyncio.run(run())
+
+def load_gas_prices_data(records):
+    stmt = """
+        INSERT INTO gas_prices_raw (safe_gas, propose_gas, fast_gas, timestamp)
+        SELECT %s, %s, %s, current_timestamp()
+    """
+
+    conn = snowflake.connector.connect(**Variable.get("snowflake_conn_json", deserialize_json=True), schema="RAW")
+    cs = conn.cursor()
+    for r in records:
+        cs.execute(
+            stmt,
+            (
+                r.get("SafeGasPrice"),
+                r.get("ProposeGasPrice"),
+                r.get("FastGasPrice"),
+            ),
+        )
+    cs.close()
+    conn.close()
+    logging.info(f"Inserted {len(records)} records into Snowflake.")
+
+
+async def fetch_gas():
+    await etherscan_limiter.wait()
+
+    ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
+    if not ETHERSCAN_API_KEY:
+        logger.warning(
+            "No Etherscan API key found. Using API without key may result in rate limiting."
+        )
+    url = f"https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey={ETHERSCAN_API_KEY}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            r = await response.json()
+    return r.get("result", {})
 
 
 def run_async_fetch_and_load_gas_prices(**ctx):
     async def run():
-        ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
-        if not ETHERSCAN_API_KEY:
-            logger.warning(
-                "No Etherscan API key found. Using API without key may result in rate limiting."
-            )
+        return await fetch_loop(fetch_gas, [()])
 
-        url = f"https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey={ETHERSCAN_API_KEY}"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                r = await response.json()
-
-        result = r.get("result", {})
-
-        stmt = """
-            INSERT INTO gas_prices_raw (safe_gas, propose_gas, fast_gas, timestamp)
-            SELECT %s, %s, %s, current_timestamp()
-        """
-
-        conn = snowflake.connector.connect(**SNOWFLAKE_CONN, schema="RAW")
-        cs = conn.cursor()
-        cs.execute(
-            stmt,
-            (
-                result.get("SafeGasPrice"),
-                result.get("ProposeGasPrice"),
-                result.get("FastGasPrice"),
-            ),
-        )
-        cs.close()
-        conn.close()
-        assert "SafeGasPrice" in result
-
-    asyncio.run(run())
+    records = asyncio.run(run())
+    load_gas_prices_data(records)
 
 
 @dag(
     dag_id='blockchain_data_fetch_and_load_dag',
     default_args=default_args,
-    schedule='*/30 * * * *',
+    schedule='*/15 * * * *',
     start_date=pendulum.now('UTC').subtract(days=1),
     catchup=False,
     max_active_runs=1,
@@ -215,7 +231,8 @@ def blockchain_data_fetch_and_load_dag():
     def fetch_and_load_gas_prices():
         run_async_fetch_and_load_gas_prices()
 
-    fetch_and_load_usdt_weth() >> fetch_and_load_gas_prices() # pyright: ignore[reportUnusedExpression]
+    fetch_and_load_usdt_weth()
+    fetch_and_load_gas_prices() # pyright: ignore[reportUnusedExpression]
 
 dag = blockchain_data_fetch_and_load_dag()
 
