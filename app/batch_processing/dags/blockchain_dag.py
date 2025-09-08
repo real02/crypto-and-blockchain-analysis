@@ -2,16 +2,18 @@ import aiohttp
 import asyncio
 import logging
 import os
-import requests
 import pandas as pd
+import pendulum
 import snowflake.connector
 
 from dotenv import load_dotenv
 from pathlib import Path
 
-from batch_processing.snowflake_utils import SNOWFLAKE_CONN
+from airflow.decorators import dag, task
+from batch_processing.snowflake.snowflake_utils import SNOWFLAKE_CONN
 from blockchain_collector import etherscan_limiter
-from fastapi_listener import rate_limited_fetch_exchange_data
+
+from datetime import timedelta
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +27,13 @@ logger = logging.getLogger("etl-dag")
 # TODO load these variables from .env file or from Airflow variables
 SYMBOLS = ["BTC/USDT", "ETH/USDT"]
 EXCHANGES = ["binance", "kraken", "coinbasepro"]
+
+default_args ={
+    'owner': 'aiflow',
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+    'email_on_failure': False,
+}
 
 
 async def fetch_all_token_transfers(
@@ -83,7 +92,7 @@ def load_cex_addresses_from_csv():
     return df["address"].tolist()
 
 
-def fetch_and_load_usdt_weth(**ctx):
+def run_async_fetch_and_load_usdt_weth(**ctx):
     async def run():
         start_block = ctx.get("params", {}).get("start_block")
         end_block = ctx.get("params", {}).get("end_block")
@@ -150,7 +159,7 @@ def fetch_and_load_usdt_weth(**ctx):
     asyncio.run(run())
 
 
-def fetch_and_load_gas_prices(**ctx):
+def run_async_fetch_and_load_gas_prices(**ctx):
     async def run():
         ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
         if not ETHERSCAN_API_KEY:
@@ -188,53 +197,25 @@ def fetch_and_load_gas_prices(**ctx):
     asyncio.run(run())
 
 
+@dag(
+    dag_id='blockchain_data_fetch_and_load_dag',
+    default_args=default_args,
+    schedule='*/30 * * * *',
+    start_date=pendulum.now('UTC').subtract(days=1),
+    catchup=False,
+    max_active_runs=1,
+    tags=['blockchain', 'snowflake']
+)
+def blockchain_data_fetch_and_load_dag():
+    @task(task_id='fetch_and_load_usdt_weth')
+    def fetch_and_load_usdt_weth():
+        run_async_fetch_and_load_usdt_weth()
 
-# TODO do rate limit fetching blockchain data (resuse rate limiting)
+    @task(task_id='fetch_and_load_gas_prices')
+    def fetch_and_load_gas_prices():
+        run_async_fetch_and_load_gas_prices()
 
-# TODO do snowflake data load for cex prices
-#
-# TODO centralize cex rate limiter, and import it from one place
+    fetch_and_load_usdt_weth() >> fetch_and_load_gas_prices() # pyright: ignore[reportUnusedExpression]
 
+dag = blockchain_data_fetch_and_load_dag()
 
-def fetch_and_load_cex_prices(duration_secs=600, fetch_interval_secs=15):
-    async def collect_all():
-        tasks = [
-            rate_limited_fetch_exchange_data(exchange, SYMBOLS)
-            for exchange in EXCHANGES
-        ]
-        results = await asyncio.gather(*tasks)
-        return [record for sublist in results for record in sublist]
-
-    records = asyncio.run(collect_all())
-
-    if not records:
-        logging.warning("No data to load into Snowflake.")
-        return
-
-    conn = snowflake.connector.connect(**SNOWFLAKE_CONN)
-    cs = conn.cursor()
-    stmt = """
-        INSERT INTO cex_prices_raw (ts, exchange, symbol, bid, ask, last, bid_volume, ask_volume, spread, spread_percentage)
-        SELECT to_timestamp_ltz(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s
-    """
-
-    for r in records:
-        ts = r["timestamp"]
-        cs.execute(
-            stmt,
-            (
-                ts,
-                r["exchange"],
-                r["symbol"],
-                r["bid"],
-                r["ask"],
-                r["last"],
-                r["bid_volume"],
-                r["ask_volume"],
-                r["spread"],
-                r["spread_percentage"],
-            ),
-        )
-    cs.close()
-    conn.close()
-    logging.info(f"Inserted {len(records)} records into Snowflake.")
