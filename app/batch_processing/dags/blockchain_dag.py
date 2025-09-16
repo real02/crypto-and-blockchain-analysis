@@ -1,10 +1,13 @@
 import aiohttp
 import asyncio
+import json
 import logging
 import os
 import pandas as pd
 import pendulum
 import snowflake.connector
+
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -97,25 +100,25 @@ def load_cex_addresses_from_csv():
 def load_usd_weth_data(records):
     conn = snowflake.connector.connect(**Variable.get("snowflake_conn_json", deserialize_json=True), schema="RAW")
     cs = conn.cursor()
-    stmt = """
-        INSERT INTO usdt_weth_transfers_raw
-        (token, tx_hash, from_addr, to_addr, value, time_stamp, block_number)
-        SELECT %s, %s, %s, %s, %s, %s, %s
+    insert_stmt = """
+        INSERT INTO raw.token_transfers (payload, ingestion_ts)
+        SELECT PARSE_JSON(%s), %s
     """
 
     for r in records:
-        cs.execute(
-            stmt,
-            (
-                r["token"],
-                r["tx_hash"],
-                r["from_addr"],
-                r["to_addr"],
-                r["value"],
-                int(r["time_stamp"]),
-                int(r["block_number"]),
-            ),
+        json_record = json.dumps(
+            {
+                "token": r["token"],
+                "tx_hash": r["tx_hash"],
+                "from_addr": r["from_addr"],
+                "to_addr": r["to_addr"],
+                "value": r["value"],
+                "time_stamp": int(r["time_stamp"]),
+                "block_number": int(r["block_number"]),
+            }
         )
+        ingestion_time = datetime.now(timezone.utc)
+        cs.execute(insert_stmt, (json_record, ingestion_time))
     cs.close()
     conn.close()
     logging.info(f"Inserted {len(records)} records into Snowflake.")
@@ -169,22 +172,23 @@ def run_async_fetch_and_load_usdt_weth(**ctx):
 
 
 def load_gas_prices_data(records):
-    stmt = """
-        INSERT INTO gas_prices_raw (safe_gas, propose_gas, fast_gas, timestamp)
-        SELECT %s, %s, %s, current_timestamp()
+    insert_stmt = """
+        INSERT INTO raw.gas_prices (payload, ingestion_ts) 
+        SELECT PARSE_JSON(%s), %s
     """
 
     conn = snowflake.connector.connect(**Variable.get("snowflake_conn_json", deserialize_json=True), schema="RAW")
     cs = conn.cursor()
     for r in records:
-        cs.execute(
-            stmt,
-            (
-                r.get("SafeGasPrice"),
-                r.get("ProposeGasPrice"),
-                r.get("FastGasPrice"),
-            ),
+        json_record = json.dumps(
+            {
+                "safe_gas_price": r.get("SafeGasPrice"),
+                "propose_gas_price": r.get("ProposeGasPrice"),
+                "fast_gas_price": r.get("FastGasPrice"),
+            }
         )
+        ingestion_time = datetime.now(timezone.utc)
+        cs.execute(insert_stmt, (json_record, ingestion_time))
     cs.close()
     conn.close()
     logging.info(f"Inserted {len(records)} records into Snowflake.")
@@ -213,6 +217,20 @@ def run_async_fetch_and_load_gas_prices(**ctx):
     load_gas_prices_data(records)
 
 
+def create_table_if_not_exists(schema_name: str, table_name: str, ddl: str):
+    @task(task_id=f'create_{table_name}_table_if_not_exists')
+    def _inner():
+        conn = snowflake.connector.connect(
+            **Variable.get("snowflake_conn_json", deserialize_json=True)
+        )
+        cs = conn.cursor()
+        cs.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
+        cs.execute(f"CREATE TABLE IF NOT EXISTS {schema_name}.{table_name} {ddl}")
+        cs.close()
+        conn.close()
+    return _inner
+
+
 @dag(
     dag_id='blockchain_data_fetch_and_load_dag',
     default_args=default_args,
@@ -231,8 +249,16 @@ def blockchain_data_fetch_and_load_dag():
     def fetch_and_load_gas_prices():
         run_async_fetch_and_load_gas_prices()
 
-    fetch_and_load_usdt_weth()
-    fetch_and_load_gas_prices() # pyright: ignore[reportUnusedExpression]
+    create_token_transfers_table_if_not_exists = create_table_if_not_exists(
+        "raw", "token_transfers", "(payload VARIANT, ingestion_ts TIMESTAMP_NTZ)"
+    )
+
+    create_gas_prices_table_if_not_exists = create_table_if_not_exists(
+        "raw", "gas_prices", "(payload VARIANT, ingestion_ts TIMESTAMP_NTZ)"
+    )
+
+    create_token_transfers_table_if_not_exists() >> fetch_and_load_usdt_weth() # pyright: ignore[reportUnusedExpression]
+    create_gas_prices_table_if_not_exists() >> fetch_and_load_gas_prices() # pyright: ignore[reportUnusedExpression]
 
 dag = blockchain_data_fetch_and_load_dag()
 

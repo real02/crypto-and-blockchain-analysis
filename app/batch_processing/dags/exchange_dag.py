@@ -1,11 +1,12 @@
 import asyncio
+import json
 import logging
 import pendulum
 import snowflake.connector
 
 from airflow.decorators import dag, task
 from airflow.sdk import Variable
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from batch_processing.dags.utils.fetch_loop import fetch_loop
 from fastapi_listener import rate_limited_fetch_exchange_data
@@ -26,24 +27,27 @@ def load_to_snowflake(records):
     conn = snowflake.connector.connect(**Variable.get("snowflake_conn_json", deserialize_json=True))
     cs = conn.cursor()
     insert_stmt = """
-        INSERT INTO cex_prices_raw (ts, exchange, symbol, bid, ask, last, bid_volume, ask_volume, spread, spread_percentage) 
-        SELECT to_timestamp_ltz(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s
+        INSERT INTO raw.cex_prices (payload, ingestion_ts) 
+        SELECT PARSE_JSON(%s), %s
     """
  
     for r in records:
-        ts = r['timestamp']
-        cs.execute(insert_stmt, (
-            ts,
-            r['exchange'],
-            r['symbol'],
-            r['bid'],
-            r['ask'],
-            r['last'],
-            r['bid_volume'],
-            r['ask_volume'],
-            r['spread'],
-            r['spread_percentage']
-        ))
+        json_record = json.dumps(
+            {
+                "timestamp": r['timestamp'],
+                "exchange": r['exchange'],
+                "symbol": r['symbol'],
+                "bid": r['bid'],
+                "ask": r['ask'],
+                "last": r['last'],
+                "bid_volume": r['bid_volume'],
+                "ask_volume": r['ask_volume'],
+                "spread": r['spread'],
+                "spread_percentage": r['spread_percentage']
+            }
+        )
+        ingestion_time = datetime.now(timezone.utc)
+        cs.execute(insert_stmt, (json_record, ingestion_time))
 
     cs.close()
     conn.close()
@@ -71,11 +75,27 @@ def run_async_cex_fetch_and_load():
     tags=['crypto', 'snowflake']
 )
 def cex_price_fetch_and_load_dag():
+    @task(task_id='create_cex_prices_table_if_not_exists')
+    def create_cex_prices_table_if_not_exists():
+        conn = snowflake.connector.connect(
+            **Variable.get("snowflake_conn_json", deserialize_json=True)
+        )
+        cs = conn.cursor()
+        cs.execute("CREATE SCHEMA IF NOT EXISTS raw")
+        cs.execute("""
+            CREATE TABLE IF NOT EXISTS raw.cex_prices (
+                payload VARIANT,
+                ingestion_ts TIMESTAMP_NTZ
+            )
+        """)
+        cs.close()
+        conn.close()
+
     @task(task_id='fetch_and_load_cex_data')
     def fetch_and_load_cex_data():
         run_async_cex_fetch_and_load()
 
-    fetch_and_load_cex_data()
+    create_cex_prices_table_if_not_exists() >> fetch_and_load_cex_data() # pyright: ignore[reportUnusedExpression]
 
 dag = cex_price_fetch_and_load_dag()
 
